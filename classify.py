@@ -60,11 +60,16 @@ def main():
 
             for x in os.listdir(args.captcha_dir):
                 # load image and preprocess it
-                raw_data = cv2.imread(os.path.join(args.captcha_dir, x))
-                rgb_data = cv2.cvtColor(raw_data, cv2.COLOR_BGR2RGB)
-                image = numpy.array(rgb_data) / 255.0
-                (c, h, w) = image.shape
-                image = image.reshape([-1, c, h, w])
+                raw_data = numpy.array(cv2.imread(os.path.join(args.captcha_dir, x)))
+                image = cv2.cvtColor(raw_data, cv2.COLOR_BGR2GRAY)
+                # image = cv2.cvtColor(rgb_data, cv2.COLOR_RGB2GRAY)
+                _, image = cv2.threshold(image, 0, 255, cv2.THRESH_OTSU)
+            # raw_data = cv2.imread(os.path.join(self.directory_name, random_image_file), cv2.IMREAD_GRAYSCALE)
+                image = numpy.array(image) / 255.0
+                # (c, h, w) = image.shape
+                (c, h) = image.shape
+                # image = image.reshape([-1, c, h, w])
+                image = image.reshape([-1, c, h, 1])
                 prediction = model.predict(image)
                 output_file.write(x + ", " + decode(captcha_symbols, prediction) + "\n")
 

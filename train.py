@@ -12,6 +12,9 @@ import random
 import argparse
 import tensorflow as tf
 import tensorflow.keras as keras
+import time
+import csv
+
 
 # Build a Keras model given some parameters
 def create_model(captcha_length, captcha_num_symbols, input_shape, model_depth=5, module_size=2):
@@ -34,7 +37,10 @@ def create_model(captcha_length, captcha_num_symbols, input_shape, model_depth=5
 # In this case, we have a folder full of images
 # Elements of a Sequence are *batches* of images, of some size batch_size
 class ImageSequence(keras.utils.Sequence):
-    def __init__(self, directory_name, batch_size, captcha_length, captcha_symbols, captcha_width, captcha_height):
+    def __init__(self, dataset_filepath, directory_name, batch_size, captcha_length, captcha_symbols, captcha_width, captcha_height):
+        with open(dataset_filepath, newline='') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',', quotechar='|')
+            self.data = {rows[1]:rows[0] for rows in reader}
         self.directory_name = directory_name
         self.batch_size = batch_size
         self.captcha_length = captcha_length
@@ -53,7 +59,7 @@ class ImageSequence(keras.utils.Sequence):
 
     def __getitem__(self, idx):
         print("Files size: ", len(self.files))
-        X = numpy.zeros((self.batch_size, self.captcha_height, self.captcha_width, 3), dtype=numpy.float32)
+        X = numpy.zeros((self.batch_size, self.captcha_height, self.captcha_width), dtype=numpy.float32)
         y = [numpy.zeros((self.batch_size, len(self.captcha_symbols)), dtype=numpy.uint8) for i in range(self.captcha_length)]
 
         for i in range(self.batch_size):
@@ -65,15 +71,11 @@ class ImageSequence(keras.utils.Sequence):
 
             # We have to scale the input pixel values to the range [0, 1] for
             # Keras so we divide by 255 since the image is 8-bit RGB
-            raw_data = cv2.imread(os.path.join(self.directory_name, random_image_file))
-            rgb_data = cv2.cvtColor(raw_data, cv2.COLOR_BGR2RGB)
-            processed_data = numpy.array(rgb_data) / 255.0
+            raw_data = cv2.imread(os.path.join(self.directory_name, random_image_file), cv2.IMREAD_GRAYSCALE)
+            processed_data = numpy.array(raw_data) / 255.0
             X[i] = processed_data
 
-            # We have a little hack here - we save captchas as TEXT_num.png if there is more than one captcha with the text "TEXT"
-            # So the real label should have the "_num" stripped out.
-
-            random_image_label = random_image_label.split('_')[0]
+            random_image_label = self.data[random_image_label+'.png'].ljust(self.captcha_length, '@')
 
             for j, ch in enumerate(random_image_label):
                 y[j][i, :] = 0
@@ -92,6 +94,8 @@ def main():
     parser.add_argument('--input-model', help='Where to look for the input model to continue training', type=str)
     parser.add_argument('--epochs', help='How many training epochs to run', type=int)
     parser.add_argument('--symbols', help='File with the symbols to use in captchas', type=str)
+    parser.add_argument('--training-labels', help='CSV file with the original labels of the captchas', type=str)
+    parser.add_argument('--validate-labels', help='CSV file with the original validate labels of the captchas', type=str)
     args = parser.parse_args()
 
     if args.width is None:
@@ -130,6 +134,14 @@ def main():
         print("Please specify the captcha symbols file")
         exit(1)
 
+    if args.training_labels is None:
+        print("Please specify the path to the original training labels file")
+        exit(1)
+
+    if args.validate_labels is None:
+        print("Please specify the path to the original validate labels file")
+        exit(1)
+
     captcha_symbols = None
     with open(args.symbols) as symbols_file:
         captcha_symbols = symbols_file.readline()
@@ -137,11 +149,11 @@ def main():
     # physical_devices = tf.config.experimental.list_physical_devices('GPU')
     # assert len(physical_devices) > 0, "No GPU available!"
     # tf.config.experimental.set_memory_growth(physical_devices[0], True)
-
+    start = time.time()
     # with tf.device('/device:GPU:0'):
     with tf.device('/device:CPU:0'):
     # with tf.device('/device:XLA_CPU:0'):
-        model = create_model(args.length, len(captcha_symbols), (args.height, args.width, 3))
+        model = create_model(args.length, len(captcha_symbols), (args.height, args.width, 1))
 
         if args.input_model is not None:
             model.load_weights(args.input_model)
@@ -152,8 +164,8 @@ def main():
 
         model.summary()
 
-        training_data = ImageSequence(args.train_dataset, args.batch_size, args.length, captcha_symbols, args.width, args.height)
-        validation_data = ImageSequence(args.validate_dataset, args.batch_size, args.length, captcha_symbols, args.width, args.height)
+        training_data = ImageSequence(args.training_labels, args.train_dataset, args.batch_size, args.length, captcha_symbols, args.width, args.height)
+        validation_data = ImageSequence(args.validate_labels, args.validate_dataset, args.batch_size, args.length, captcha_symbols, args.width, args.height)
 
         callbacks = [keras.callbacks.EarlyStopping(patience=3),
                      # keras.callbacks.CSVLogger('log.csv'),
@@ -172,6 +184,6 @@ def main():
         except KeyboardInterrupt:
             print('KeyboardInterrupt caught, saving current weights as ' + args.output_model_name+'_resume.h5')
             model.save_weights(args.output_model_name+'_resume.h5')
-
+    print(f'Completed within {time.time()-start} sec')
 if __name__ == '__main__':
     main()
